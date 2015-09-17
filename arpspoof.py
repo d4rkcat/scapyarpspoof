@@ -22,7 +22,7 @@ from argparse import ArgumentParser
 
 def fgetmac(ip):
 	popen('ping %s -c 2 -i 0.5' % ip).read()
-	return popen("arp -a | grep '%s' | cut -d 't' -f 2 | cut -d ' ' -f 2" %(ip)).read().strip()
+	return popen("arp -a | grep '(%s)' | cut -d 't' -f 2 | cut -d ' ' -f 2" %(ip)).read().strip()
 
 def fownmac():
 	def_gw_device = gateways()['default'][AF_INET][1]
